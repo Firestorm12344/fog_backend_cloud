@@ -24,6 +24,8 @@ status = {
     "buffer_size": 0,
     "sampling_rate": 64,
     "last_updated": None,
+    "device_connected": False,
+    "last_device_message": None,
 }
 
 buffer = {
@@ -56,21 +58,54 @@ def get_status():
     return jsonify(data)
 
 
+@app.get("/api/latest-samples")
+def get_latest_samples():
+    try:
+        limit = int(request.args.get("limit", "80"))
+    except ValueError:
+        limit = 80
+
+    limit = max(1, min(limit, 300))
+
+    with buffer_lock:
+        recent = {
+            sensor: {
+                axis: buffer[sensor][axis][-limit:]
+                for axis in ["x", "y", "z"]
+            }
+            for sensor in ["ankle", "thigh", "hip"]
+        }
+
+    return jsonify(recent)
+
+
 @app.post("/api/data")
 def receive_data():
     payload = request.get_json(silent=True) or {}
     if not payload:
         return jsonify({"error": "json body required"}), 400
 
+    samples = payload if isinstance(payload, list) else [payload]
+
     try:
+        now = datetime.now().isoformat()
         with buffer_lock:
-            for sensor in ["ankle", "thigh", "hip"]:
-                for axis in ["x", "y", "z"]:
-                    buffer[sensor][axis].append(float(payload[sensor][axis]))
-            status["samples_received"] += 1
-            status["buffer_size"] = len(buffer["ankle"]["x"])
-            status["last_updated"] = datetime.now().isoformat()
-        return jsonify({"message": "data accepted"})
+            for item in samples:
+                for sensor in ["ankle", "thigh", "hip"]:
+                    if sensor not in item:
+                        raise ValueError(f"missing sensor {sensor}")
+                    for axis in ["x", "y", "z"]:
+                        if axis not in item[sensor]:
+                            raise ValueError(f"missing axis {sensor}.{axis}")
+                        buffer[sensor][axis].append(float(item[sensor][axis]))
+
+                status["samples_received"] += 1
+                status["buffer_size"] = len(buffer["ankle"]["x"])
+                status["last_updated"] = now
+                status["device_connected"] = True
+                status["last_device_message"] = now
+
+        return jsonify({"message": "data accepted", "samples_received": len(samples)})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
