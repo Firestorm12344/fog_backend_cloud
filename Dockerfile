@@ -19,4 +19,4 @@ COPY . .
 
 EXPOSE 5050
 
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5050", "server:app"]
+CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT:-5050} server:app"]

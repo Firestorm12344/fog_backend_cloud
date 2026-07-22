@@ -33,6 +33,15 @@ buffer = {
 }
 
 
+@app.get("/")
+def root():
+    return jsonify({
+        "message": "FOG backend is running",
+        "health": "/api/health",
+        "status": "/api/status",
+    })
+
+
 @app.get("/api/health")
 def health():
     return jsonify({"status": "ok"})
