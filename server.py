@@ -1,8 +1,9 @@
 import os
-import json
+import csv
+import io
 from datetime import datetime
 from threading import Lock
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from inference import run_inference
 
 app = Flask(__name__)
@@ -26,6 +27,7 @@ status = {
     "last_updated": None,
     "device_connected": False,
     "last_device_message": None,
+    "recording_state": "idle",
 }
 
 buffer = {
@@ -79,6 +81,53 @@ def get_latest_samples():
     return jsonify(recent)
 
 
+@app.get("/api/export")
+def export_data():
+    with buffer_lock:
+        if not buffer["ankle"]["x"]:
+            return jsonify({"error": "no data available to export"}), 400
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["sample_index", "ankle_x", "ankle_y", "ankle_z", "thigh_x", "thigh_y", "thigh_z", "hip_x", "hip_y", "hip_z"])
+
+        max_len = len(buffer["ankle"]["x"])
+        for idx in range(max_len):
+            writer.writerow([
+                idx,
+                buffer["ankle"]["x"][idx],
+                buffer["ankle"]["y"][idx],
+                buffer["ankle"]["z"][idx],
+                buffer["thigh"]["x"][idx],
+                buffer["thigh"]["y"][idx],
+                buffer["thigh"]["z"][idx],
+                buffer["hip"]["x"][idx],
+                buffer["hip"]["y"][idx],
+                buffer["hip"]["z"][idx],
+            ])
+
+    response = Response(output.getvalue(), mimetype="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=imu_export.csv"
+    return response
+
+
+@app.post("/api/reset-buffer")
+def reset_buffer():
+    with buffer_lock:
+        for sensor in ["ankle", "thigh", "hip"]:
+            for axis in ["x", "y", "z"]:
+                buffer[sensor][axis].clear()
+
+        status["samples_received"] = 0
+        status["buffer_size"] = 0
+        status["recording_state"] = "idle"
+        status["last_updated"] = datetime.now().isoformat()
+        status["device_connected"] = False
+        status["last_device_message"] = None
+
+    return jsonify({"message": "buffer reset"})
+
+
 @app.post("/api/data")
 def receive_data():
     payload = request.get_json(silent=True) or {}
@@ -104,6 +153,7 @@ def receive_data():
                 status["last_updated"] = now
                 status["device_connected"] = True
                 status["last_device_message"] = now
+                status["recording_state"] = "recording"
 
         return jsonify({"message": "data accepted", "samples_received": len(samples)})
     except Exception as exc:
